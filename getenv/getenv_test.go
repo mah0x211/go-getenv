@@ -55,6 +55,10 @@ func TestSet(t *testing.T) {
 		return nil
 	}
 
+	checkfn := func(iv interface{}, k string) error {
+		return nil
+	}
+
 	// test that set env
 	strv := "string"
 	bolv := true
@@ -64,20 +68,20 @@ func TestSet(t *testing.T) {
 	f32v := float32(10.1)
 	f64v := float64(11.2)
 	for name, v := range map[string][]interface{}{
-		"STR":     []interface{}{strv, &strv, nil},
-		"BOL":     []interface{}{bolv, &bolv, parsefn},
-		"UINTPTR": []interface{}{uipv, &uipv, nil},
-		"INT":     []interface{}{intv, &intv, parsefn},
-		"UINT":    []interface{}{uintv, &uintv, nil},
-		"FLOAT32": []interface{}{f32v, &f32v, parsefn},
-		"FLOAT64": []interface{}{f64v, &f64v, nil},
+		"STR":     []interface{}{strv, &strv, nil, nil},
+		"BOL":     []interface{}{bolv, &bolv, parsefn, checkfn},
+		"UINTPTR": []interface{}{uipv, &uipv, nil, nil},
+		"INT":     []interface{}{intv, &intv, parsefn, checkfn},
+		"UINT":    []interface{}{uintv, &uintv, nil, nil},
+		"FLOAT32": []interface{}{f32v, &f32v, parsefn, checkfn},
+		"FLOAT64": []interface{}{f64v, &f64v, nil, nil},
 	} {
 		desc := fmt.Sprintf("test %T env", v[0])
 		if fn, ok := v[2].(ParseFunc); ok {
-			assert.NoError(t, Set(name, desc, v[1], fn))
+			assert.NoError(t, Set(name, desc, v[1], fn, v[3].(CheckFunc)))
 		} else {
 			// use defaultParseFunc
-			assert.NoError(t, Set(name, desc, v[1], nil))
+			assert.NoError(t, Set(name, desc, v[1], nil, nil))
 			v[2] = defaultParseFunc
 		}
 		// confirm
@@ -96,7 +100,7 @@ func TestSet(t *testing.T) {
 	for _, name := range []string{
 		"", "0BAR", " BAR", "BAR ", "BAR-BAZ",
 	} {
-		assert.Equal(t, ErrName, Set(name, "", nil, nil))
+		assert.Equal(t, ErrName, Set(name, "", nil, nil, nil))
 	}
 
 	// test that returns ErrValue
@@ -110,7 +114,7 @@ func TestSet(t *testing.T) {
 		&map[string]string{},
 		&struct{}{},
 	} {
-		assert.Equal(t, ErrValue, Set("BAR", "", v, nil))
+		assert.Equal(t, ErrValue, Set("BAR", "", v, nil, nil))
 	}
 
 	// test that returns error
@@ -123,7 +127,7 @@ func TestSet(t *testing.T) {
 		"FLOAT32": &f32v,
 		"FLOAT64": &f64v,
 	} {
-		err := Set(name+"_ADD", "", v, nil)
+		err := Set(name+"_ADD", "", v, nil, nil)
 		assert.Error(t, err)
 		assert.True(t, errors.Is(err, ErrValueInUsed))
 		fmt.Printf("%v\n", err)
@@ -155,7 +159,7 @@ func TestUsage(t *testing.T) {
 	names := make([]string, 0, len(vals))
 	for name, v := range vals {
 		desc := fmt.Sprintf("test %q env", name)
-		assert.NoError(t, Set(name, desc, v[1], nil))
+		assert.NoError(t, Set(name, desc, v[1], nil, nil))
 		names = append(names, name)
 	}
 	sort.Strings(names)
@@ -176,12 +180,20 @@ func TestParse(t *testing.T) {
 
 	// setup
 	suffix := "_" + strconv.FormatInt(time.Now().Unix(), 10)
-	ncall := 0
+	var nCallParseFn int
 	var parseErr error
 	parsefn := func(iv interface{}, k, v string) error {
-		ncall++
+		nCallParseFn++
 		return parseErr
 	}
+
+	var nCallCheckFn int
+	var checkErr error
+	checkfn := func(iv interface{}, k string) error {
+		nCallCheckFn++
+		return checkErr
+	}
+
 	strv := "string"
 	bolv := true
 	uipv := uintptr(123)
@@ -201,7 +213,7 @@ func TestParse(t *testing.T) {
 	envnames := make([]string, 0, len(vals))
 	for name, v := range vals {
 		envnames = append(envnames, name)
-		assert.NoError(t, Set(name, "", v[1], parsefn))
+		assert.NoError(t, Set(name, "", v[1], parsefn, checkfn))
 	}
 	defer func() {
 		for _, name := range envnames {
@@ -209,9 +221,10 @@ func TestParse(t *testing.T) {
 		}
 	}()
 
-	// test that not call parser
+	// test that not call parser and checker
 	assert.NoError(t, Parse())
-	assert.Equal(t, 0, ncall)
+	assert.Equal(t, 0, nCallParseFn)
+	assert.Equal(t, 0, nCallCheckFn)
 
 	// test that calling parser if the environment variables defined
 	n := 0
@@ -220,8 +233,10 @@ func TestParse(t *testing.T) {
 		os.Setenv(name, envval)
 		n++
 		assert.NoError(t, Parse())
-		assert.Equal(t, n, ncall)
-		ncall = 0
+		assert.Equal(t, n, nCallParseFn)
+		nCallParseFn = 0
+		assert.Equal(t, n, nCallCheckFn)
+		nCallCheckFn = 0
 		env := name2envs[name][0]
 		assert.Equal(t, env.DefaultValue, v[0])
 	}
@@ -231,15 +246,43 @@ func TestParse(t *testing.T) {
 	err := Parse()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "custom parse error")
-	assert.Equal(t, 1, ncall)
+	assert.Equal(t, 1, nCallParseFn)
+	assert.Equal(t, 0, nCallCheckFn)
+
+	// test that stops parsing and returns error when the checker returns an error
+	parseErr = nil
+	nCallParseFn = 0
+	checkErr = fmt.Errorf("custom check error")
+	err = Parse()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "custom check error")
+	assert.Equal(t, 1, nCallParseFn)
+	assert.Equal(t, 1, nCallCheckFn)
 
 	// test that use defaultParseFunc if parser is not defined
 	name2envs = map[string][]*Env{}
+	nCallParseFn = 0
+	nCallCheckFn = 0
+	checkErr = nil
 	for name, v := range vals {
 		envnames = append(envnames, name)
-		assert.NoError(t, Set(name, "", v[1], nil))
+		assert.NoError(t, Set(name, "", v[1], nil, checkfn))
 	}
 	assert.NoError(t, Parse())
+	assert.Equal(t, 0, nCallParseFn)
+	assert.Equal(t, len(vals), nCallCheckFn)
+
+	// test that use defaultCheckFunc if checker is not defined
+	name2envs = map[string][]*Env{}
+	nCallParseFn = 0
+	nCallCheckFn = 0
+	for name, v := range vals {
+		envnames = append(envnames, name)
+		assert.NoError(t, Set(name, "", v[1], parsefn, nil))
+	}
+	assert.NoError(t, Parse())
+	assert.Equal(t, len(vals), nCallParseFn)
+	assert.Equal(t, 0, nCallCheckFn)
 	for _, v := range vals {
 		exp := v[2]
 		act := reflect.Indirect(reflect.ValueOf(v[1])).Interface()
@@ -247,12 +290,14 @@ func TestParse(t *testing.T) {
 	}
 
 	// test that returns ErrEnvVar if cannot convert environment variable to actual value
+	name2envs = map[string][]*Env{}
+	envname := ""
 	envval := "{{unparsable env value}}"
-	var envname string
-	for _, name := range envnames {
+	for name, v := range vals {
 		if !strings.HasPrefix(name, "STR") {
-			os.Setenv(name, envval)
 			envname = name
+			os.Setenv(name, envval)
+			assert.NoError(t, Set(name, "", v[1], nil, nil))
 			break
 		}
 	}
