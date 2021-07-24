@@ -25,7 +25,7 @@ func isAlpha(b byte) bool {
 	return isUpper(b) || isLower(b)
 }
 
-func isFunc(fn ParseFunc) bool {
+func isFunc(fn interface{}) bool {
 	v := reflect.ValueOf(fn)
 	return v.Kind() == reflect.Func && !v.IsNil()
 }
@@ -125,6 +125,13 @@ func defaultParseFunc(iv interface{}, envName, envValue string) error {
 	return nil
 }
 
+type CheckFunc func(iv interface{}, envName string) error
+
+func defaultCheckFunc(iv interface{}, envName string) error {
+	// allow any value
+	return nil
+}
+
 var ErrName = fmt.Errorf("name must be non-empty printable ascii string and that must not contain spaces and '='")
 
 func checkName(s string) error {
@@ -178,21 +185,26 @@ type Env struct {
 	DefaultValue interface{}
 	Value        interface{}
 	Parse        ParseFunc
+	Check        CheckFunc
 }
 
 var name2envs = map[string][]*Env{}
 
 var ErrValueInUsed = fmt.Errorf("value already in used")
 
-func Set(name, desc string, value interface{}, parsefn ParseFunc) error {
+func Set(name, desc string, value interface{}, parsefn ParseFunc, checkfn CheckFunc) error {
 	var defval interface{}
 	// check arguments
 	if err := checkName(name); err != nil {
 		return err
 	} else if defval, err = checkValue(value); err != nil {
 		return err
-	} else if !isFunc(parsefn) {
+	}
+	if !isFunc(parsefn) {
 		parsefn = defaultParseFunc
+	}
+	if !isFunc(checkfn) {
+		checkfn = defaultCheckFunc
 	}
 
 	// check that the value is already use by another names
@@ -215,6 +227,7 @@ func Set(name, desc string, value interface{}, parsefn ParseFunc) error {
 		DefaultValue: defval,
 		Value:        value,
 		Parse:        parsefn,
+		Check:        checkfn,
 	})
 
 	return nil
@@ -244,6 +257,8 @@ func Parse() error {
 		if v := strings.TrimSpace(os.Getenv(name)); v != "" {
 			for _, env := range envs {
 				if err := env.Parse(env.Value, name, v); err != nil {
+					return fmt.Errorf("%w: %q %v", ErrEnvVar, name, err)
+				} else if err = env.Check(env.Value, name); err != nil {
 					return fmt.Errorf("%w: %q %v", ErrEnvVar, name, err)
 				}
 			}
