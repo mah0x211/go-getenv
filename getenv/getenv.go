@@ -184,9 +184,9 @@ type Env struct {
 	Check        CheckFunc
 }
 
-var name2envs = map[string][]*Env{}
+var name2envs = map[string]*Env{}
 
-var ErrValueInUsed = fmt.Errorf("value already in used")
+var ErrNameAlready = fmt.Errorf("environment variable name is already registered")
 
 // Register environment variables to be read by the Parse function.
 // The parsefn and checkfn functions are used as value parser and value checker. If the function is nil, the default function will be used.
@@ -195,6 +195,8 @@ func Set(name, desc string, value interface{}, required bool, parsefn ParseFunc,
 	// check arguments
 	if err := checkName(name); err != nil {
 		return err
+	} else if v, ok := name2envs[name]; ok && v != nil {
+		return fmt.Errorf("%w: %q already registered", ErrNameAlready, name)
 	} else if defval, err = checkValue(value); err != nil {
 		return err
 	}
@@ -205,21 +207,8 @@ func Set(name, desc string, value interface{}, required bool, parsefn ParseFunc,
 		checkfn = defaultCheckFunc
 	}
 
-	// check that the value is already use by another names
-	for k, envs := range name2envs {
-		for _, env := range envs {
-			if env.Value == value {
-				return fmt.Errorf("%w: %p already use by %q", ErrValueInUsed, value, k)
-			}
-		}
-	}
-
-	// set new env
-	envs, ok := name2envs[name]
-	if !ok {
-		envs = []*Env{}
-	}
-	name2envs[name] = append(envs, &Env{
+	// set env
+	name2envs[name] = &Env{
 		Name:         name,
 		Description:  desc,
 		DefaultValue: defval,
@@ -227,7 +216,7 @@ func Set(name, desc string, value interface{}, required bool, parsefn ParseFunc,
 		Required:     required,
 		Parse:        parsefn,
 		Check:        checkfn,
-	})
+	}
 
 	return nil
 }
@@ -242,10 +231,8 @@ func Usage(usagefn UsageFunc) {
 	sort.Strings(names)
 
 	for _, name := range names {
-		envs := name2envs[name]
-		for _, env := range envs {
-			usagefn(name, env.Description, env.DefaultValue, env.Required)
-		}
+		env := name2envs[name]
+		usagefn(name, env.Description, env.DefaultValue, env.Required)
 	}
 }
 
@@ -253,21 +240,16 @@ var ErrEnvVar = fmt.Errorf("invalid environment variable")
 var ErrNotDefined = fmt.Errorf("required environment variable not defined")
 
 func Parse() error {
-	for name, envs := range name2envs {
+	for name, env := range name2envs {
 		if v := strings.TrimSpace(os.Getenv(name)); v != "" {
-			for _, env := range envs {
-				if err := env.Parse(env.Value, name, v); err != nil {
-					return fmt.Errorf("%w: %q %v", ErrEnvVar, name, err)
-				} else if err = env.Check(env.Value, name); err != nil {
-					return fmt.Errorf("%w: %q %v", ErrEnvVar, name, err)
-				}
+			if err := env.Parse(env.Value, name, v); err != nil {
+				return fmt.Errorf("%w: %q %v", ErrEnvVar, name, err)
+			} else if err = env.Check(env.Value, name); err != nil {
+				return fmt.Errorf("%w: %q %v", ErrEnvVar, name, err)
 			}
 			continue
-		}
-		for _, env := range envs {
-			if env.Required {
-				return fmt.Errorf("%w: %q", ErrNotDefined, name)
-			}
+		} else if env.Required {
+			return fmt.Errorf("%w: %q", ErrNotDefined, name)
 		}
 	}
 	return nil
