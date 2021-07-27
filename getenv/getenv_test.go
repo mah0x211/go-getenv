@@ -22,18 +22,6 @@ func getFuncPointer(f interface{}) (uintptr, bool) {
 	return reflect.Indirect(v).Pointer(), true
 }
 
-func notEqualFuncs(t *testing.T, a interface{}, b interface{}) bool {
-	ap, ok := getFuncPointer(a)
-	if !ok {
-		return false
-	}
-	bp, ok := getFuncPointer(b)
-	if !ok {
-		return false
-	}
-	return assert.NotEqual(t, ap, bp)
-}
-
 func equalFuncs(t *testing.T, a interface{}, b interface{}) bool {
 	ap, ok := getFuncPointer(a)
 	if !ok {
@@ -48,7 +36,7 @@ func equalFuncs(t *testing.T, a interface{}, b interface{}) bool {
 
 func TestSet(t *testing.T) {
 	defer func() {
-		name2envs = map[string][]*Env{}
+		name2envs = map[string]*Env{}
 	}()
 
 	parsefn := func(iv interface{}, k, v string) error {
@@ -68,13 +56,13 @@ func TestSet(t *testing.T) {
 	f32v := float32(10.1)
 	f64v := float64(11.2)
 	for name, v := range map[string][]interface{}{
-		"STR":     []interface{}{strv, &strv, nil, nil},
-		"BOL":     []interface{}{bolv, &bolv, parsefn, checkfn},
-		"UINTPTR": []interface{}{uipv, &uipv, nil, nil},
-		"INT":     []interface{}{intv, &intv, parsefn, checkfn},
-		"UINT":    []interface{}{uintv, &uintv, nil, nil},
-		"FLOAT32": []interface{}{f32v, &f32v, parsefn, checkfn},
-		"FLOAT64": []interface{}{f64v, &f64v, nil, nil},
+		"STR":     {strv, &strv, nil, nil},
+		"BOL":     {bolv, &bolv, parsefn, checkfn},
+		"UINTPTR": {uipv, &uipv, nil, nil},
+		"INT":     {intv, &intv, parsefn, checkfn},
+		"UINT":    {uintv, &uintv, nil, nil},
+		"FLOAT32": {f32v, &f32v, parsefn, checkfn},
+		"FLOAT64": {f64v, &f64v, nil, nil},
 	} {
 		desc := fmt.Sprintf("test %T env", v[0])
 		if fn, ok := v[2].(ParseFunc); ok {
@@ -85,10 +73,8 @@ func TestSet(t *testing.T) {
 			v[2] = defaultParseFunc
 		}
 		// confirm
-		envs, ok := name2envs[name]
+		env, ok := name2envs[name]
 		assert.True(t, ok)
-		assert.Len(t, envs, 1)
-		env := envs[0]
 		assert.Equal(t, name, env.Name)
 		assert.Equal(t, desc, env.Description)
 		assert.Equal(t, v[1], env.Value)
@@ -127,16 +113,16 @@ func TestSet(t *testing.T) {
 		"FLOAT32": &f32v,
 		"FLOAT64": &f64v,
 	} {
-		err := Set(name+"_ADD", "", v, false, nil, nil)
+		err := Set(name, "", v, false, nil, nil)
 		assert.Error(t, err)
-		assert.True(t, errors.Is(err, ErrValueInUsed))
+		assert.True(t, errors.Is(err, ErrNameAlready))
 		fmt.Printf("%v\n", err)
 	}
 }
 
 func TestUsage(t *testing.T) {
 	defer func() {
-		name2envs = map[string][]*Env{}
+		name2envs = map[string]*Env{}
 	}()
 
 	// setup
@@ -148,13 +134,13 @@ func TestUsage(t *testing.T) {
 	f32v := float32(10.1)
 	f64v := float64(11.2)
 	vals := map[string][]interface{}{
-		"STR":     []interface{}{strv, &strv},
-		"BOL":     []interface{}{bolv, &bolv},
-		"UINTPTR": []interface{}{uipv, &uipv},
-		"INT":     []interface{}{intv, &intv},
-		"UINT":    []interface{}{uintv, &uintv},
-		"FLOAT32": []interface{}{f32v, &f32v},
-		"FLOAT64": []interface{}{f64v, &f64v},
+		"STR":     {strv, &strv},
+		"BOL":     {bolv, &bolv},
+		"UINTPTR": {uipv, &uipv},
+		"INT":     {intv, &intv},
+		"UINT":    {uintv, &uintv},
+		"FLOAT32": {f32v, &f32v},
+		"FLOAT64": {f64v, &f64v},
 	}
 	names := make([]string, 0, len(vals))
 	for name, v := range vals {
@@ -176,7 +162,7 @@ func TestUsage(t *testing.T) {
 
 func TestParse(t *testing.T) {
 	defer func() {
-		name2envs = map[string][]*Env{}
+		name2envs = map[string]*Env{}
 	}()
 
 	// setup
@@ -203,13 +189,13 @@ func TestParse(t *testing.T) {
 	f32v := float32(10.1)
 	f64v := float64(11.2)
 	vals := map[string][]interface{}{
-		"STR" + suffix:     []interface{}{strv, &strv, "env string"},
-		"BOL" + suffix:     []interface{}{bolv, &bolv, false},
-		"UINTPTR" + suffix: []interface{}{uipv, &uipv, uintptr(321)},
-		"INT" + suffix:     []interface{}{intv, &intv, int(654)},
-		"UINT" + suffix:    []interface{}{uintv, &uintv, uint(987)},
-		"FLOAT32" + suffix: []interface{}{f32v, &f32v, float32(1.01)},
-		"FLOAT64" + suffix: []interface{}{f64v, &f64v, float64(2.11)},
+		"STR" + suffix:     {strv, &strv, "env string"},
+		"BOL" + suffix:     {bolv, &bolv, false},
+		"UINTPTR" + suffix: {uipv, &uipv, uintptr(321)},
+		"INT" + suffix:     {intv, &intv, int(654)},
+		"UINT" + suffix:    {uintv, &uintv, uint(987)},
+		"FLOAT32" + suffix: {f32v, &f32v, float32(1.01)},
+		"FLOAT64" + suffix: {f64v, &f64v, float64(2.11)},
 	}
 	envnames := make([]string, 0, len(vals))
 	for name, v := range vals {
@@ -238,7 +224,7 @@ func TestParse(t *testing.T) {
 		nCallParseFn = 0
 		assert.Equal(t, n, nCallCheckFn)
 		nCallCheckFn = 0
-		env := name2envs[name][0]
+		env := name2envs[name]
 		assert.Equal(t, env.DefaultValue, v[0])
 	}
 
@@ -261,7 +247,7 @@ func TestParse(t *testing.T) {
 	assert.Equal(t, 1, nCallCheckFn)
 
 	// test that use defaultParseFunc if parser is not defined
-	name2envs = map[string][]*Env{}
+	name2envs = map[string]*Env{}
 	nCallParseFn = 0
 	nCallCheckFn = 0
 	checkErr = nil
@@ -274,7 +260,7 @@ func TestParse(t *testing.T) {
 	assert.Equal(t, len(vals), nCallCheckFn)
 
 	// test that use defaultCheckFunc if checker is not defined
-	name2envs = map[string][]*Env{}
+	name2envs = map[string]*Env{}
 	nCallParseFn = 0
 	nCallCheckFn = 0
 	for name, v := range vals {
@@ -291,7 +277,7 @@ func TestParse(t *testing.T) {
 	}
 
 	// test that returns ErrEnvVar if cannot convert environment variable to actual value
-	name2envs = map[string][]*Env{}
+	name2envs = map[string]*Env{}
 	envname := ""
 	envval := "{{unparsable env value}}"
 	for name, v := range vals {
@@ -309,7 +295,7 @@ func TestParse(t *testing.T) {
 	assert.Contains(t, err.Error(), envval)
 
 	// test that returns ErrNotDefined if environment variable is not defined
-	name2envs = map[string][]*Env{}
+	name2envs = map[string]*Env{}
 	for name, v := range vals {
 		if !strings.HasPrefix(name, "STR") {
 			os.Unsetenv(name)
