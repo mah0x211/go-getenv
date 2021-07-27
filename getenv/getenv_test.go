@@ -78,10 +78,10 @@ func TestSet(t *testing.T) {
 	} {
 		desc := fmt.Sprintf("test %T env", v[0])
 		if fn, ok := v[2].(ParseFunc); ok {
-			assert.NoError(t, Set(name, desc, v[1], fn, v[3].(CheckFunc)))
+			assert.NoError(t, Set(name, desc, v[1], false, fn, v[3].(CheckFunc)))
 		} else {
 			// use defaultParseFunc
-			assert.NoError(t, Set(name, desc, v[1], nil, nil))
+			assert.NoError(t, Set(name, desc, v[1], false, nil, nil))
 			v[2] = defaultParseFunc
 		}
 		// confirm
@@ -100,7 +100,7 @@ func TestSet(t *testing.T) {
 	for _, name := range []string{
 		"", "0BAR", " BAR", "BAR ", "BAR-BAZ",
 	} {
-		assert.Equal(t, ErrName, Set(name, "", nil, nil, nil))
+		assert.Equal(t, ErrName, Set(name, "", nil, false, nil, nil))
 	}
 
 	// test that returns ErrValue
@@ -114,7 +114,7 @@ func TestSet(t *testing.T) {
 		&map[string]string{},
 		&struct{}{},
 	} {
-		assert.Equal(t, ErrValue, Set("BAR", "", v, nil, nil))
+		assert.Equal(t, ErrValue, Set("BAR", "", v, false, nil, nil))
 	}
 
 	// test that returns error
@@ -127,7 +127,7 @@ func TestSet(t *testing.T) {
 		"FLOAT32": &f32v,
 		"FLOAT64": &f64v,
 	} {
-		err := Set(name+"_ADD", "", v, nil, nil)
+		err := Set(name+"_ADD", "", v, false, nil, nil)
 		assert.Error(t, err)
 		assert.True(t, errors.Is(err, ErrValueInUsed))
 		fmt.Printf("%v\n", err)
@@ -159,16 +159,17 @@ func TestUsage(t *testing.T) {
 	names := make([]string, 0, len(vals))
 	for name, v := range vals {
 		desc := fmt.Sprintf("test %q env", name)
-		assert.NoError(t, Set(name, desc, v[1], nil, nil))
+		assert.NoError(t, Set(name, desc, v[1], true, nil, nil))
 		names = append(names, name)
 	}
 	sort.Strings(names)
 
 	// test that set sort by name
-	Usage(func(name, desc string, defval interface{}) {
+	Usage(func(name, desc string, defval interface{}, required bool) {
 		assert.Equal(t, names[0], name)
 		assert.Equal(t, fmt.Sprintf("test %q env", name), desc)
 		assert.Equal(t, vals[name][0], defval)
+		assert.True(t, required)
 		names = names[1:]
 	})
 }
@@ -213,7 +214,7 @@ func TestParse(t *testing.T) {
 	envnames := make([]string, 0, len(vals))
 	for name, v := range vals {
 		envnames = append(envnames, name)
-		assert.NoError(t, Set(name, "", v[1], parsefn, checkfn))
+		assert.NoError(t, Set(name, "", v[1], false, parsefn, checkfn))
 	}
 	defer func() {
 		for _, name := range envnames {
@@ -266,7 +267,7 @@ func TestParse(t *testing.T) {
 	checkErr = nil
 	for name, v := range vals {
 		envnames = append(envnames, name)
-		assert.NoError(t, Set(name, "", v[1], nil, checkfn))
+		assert.NoError(t, Set(name, "", v[1], false, nil, checkfn))
 	}
 	assert.NoError(t, Parse())
 	assert.Equal(t, 0, nCallParseFn)
@@ -278,7 +279,7 @@ func TestParse(t *testing.T) {
 	nCallCheckFn = 0
 	for name, v := range vals {
 		envnames = append(envnames, name)
-		assert.NoError(t, Set(name, "", v[1], parsefn, nil))
+		assert.NoError(t, Set(name, "", v[1], false, parsefn, nil))
 	}
 	assert.NoError(t, Parse())
 	assert.Equal(t, len(vals), nCallParseFn)
@@ -297,13 +298,26 @@ func TestParse(t *testing.T) {
 		if !strings.HasPrefix(name, "STR") {
 			envname = name
 			os.Setenv(name, envval)
-			assert.NoError(t, Set(name, "", v[1], nil, nil))
+			assert.NoError(t, Set(name, "", v[1], false, nil, nil))
 			break
 		}
 	}
 	err = Parse()
 	assert.Error(t, err)
+	assert.True(t, errors.Is(err, ErrEnvVar))
 	assert.Contains(t, err.Error(), envname)
 	assert.Contains(t, err.Error(), envval)
-	assert.True(t, errors.Is(err, ErrEnvVar))
+
+	// test that returns ErrNotDefined if environment variable is not defined
+	name2envs = map[string][]*Env{}
+	for name, v := range vals {
+		if !strings.HasPrefix(name, "STR") {
+			os.Unsetenv(name)
+			assert.NoError(t, Set(name, "", v[1], true, nil, nil))
+			break
+		}
+	}
+	err = Parse()
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, ErrNotDefined))
 }

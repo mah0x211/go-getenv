@@ -25,11 +25,6 @@ func isAlpha(b byte) bool {
 	return isUpper(b) || isLower(b)
 }
 
-func isFunc(fn interface{}) bool {
-	v := reflect.ValueOf(fn)
-	return v.Kind() == reflect.Func && !v.IsNil()
-}
-
 func parseInt(s string, k reflect.Kind) (int64, error) {
 	switch k {
 	case reflect.Int:
@@ -184,6 +179,7 @@ type Env struct {
 	Description  string
 	DefaultValue interface{}
 	Value        interface{}
+	Required     bool
 	Parse        ParseFunc
 	Check        CheckFunc
 }
@@ -192,7 +188,9 @@ var name2envs = map[string][]*Env{}
 
 var ErrValueInUsed = fmt.Errorf("value already in used")
 
-func Set(name, desc string, value interface{}, parsefn ParseFunc, checkfn CheckFunc) error {
+// Register environment variables to be read by the Parse function.
+// The parsefn and checkfn functions are used as value parser and value checker. If the function is nil, the default function will be used.
+func Set(name, desc string, value interface{}, required bool, parsefn ParseFunc, checkfn CheckFunc) error {
 	var defval interface{}
 	// check arguments
 	if err := checkName(name); err != nil {
@@ -200,10 +198,10 @@ func Set(name, desc string, value interface{}, parsefn ParseFunc, checkfn CheckF
 	} else if defval, err = checkValue(value); err != nil {
 		return err
 	}
-	if !isFunc(parsefn) {
+	if parsefn == nil {
 		parsefn = defaultParseFunc
 	}
-	if !isFunc(checkfn) {
+	if checkfn == nil {
 		checkfn = defaultCheckFunc
 	}
 
@@ -226,6 +224,7 @@ func Set(name, desc string, value interface{}, parsefn ParseFunc, checkfn CheckF
 		Description:  desc,
 		DefaultValue: defval,
 		Value:        value,
+		Required:     required,
 		Parse:        parsefn,
 		Check:        checkfn,
 	})
@@ -233,7 +232,7 @@ func Set(name, desc string, value interface{}, parsefn ParseFunc, checkfn CheckF
 	return nil
 }
 
-type UsageFunc func(name, desc string, defval interface{})
+type UsageFunc func(name, desc string, defval interface{}, required bool)
 
 func Usage(usagefn UsageFunc) {
 	names := make([]string, 0, len(name2envs))
@@ -245,12 +244,13 @@ func Usage(usagefn UsageFunc) {
 	for _, name := range names {
 		envs := name2envs[name]
 		for _, env := range envs {
-			usagefn(name, env.Description, env.DefaultValue)
+			usagefn(name, env.Description, env.DefaultValue, env.Required)
 		}
 	}
 }
 
 var ErrEnvVar = fmt.Errorf("invalid environment variable")
+var ErrNotDefined = fmt.Errorf("required environment variable not defined")
 
 func Parse() error {
 	for name, envs := range name2envs {
@@ -261,6 +261,12 @@ func Parse() error {
 				} else if err = env.Check(env.Value, name); err != nil {
 					return fmt.Errorf("%w: %q %v", ErrEnvVar, name, err)
 				}
+			}
+			continue
+		}
+		for _, env := range envs {
+			if env.Required {
+				return fmt.Errorf("%w: %q", ErrNotDefined, name)
 			}
 		}
 	}
